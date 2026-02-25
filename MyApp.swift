@@ -2,10 +2,15 @@ import SwiftUI
 
 @main
 struct MyApp: App {
+    @AppStorage("hasFinishedOnboarding") private var hasFinishedOnboarding = false
+
     var body: some Scene {
         WindowGroup {
-            // This now points to your new 3-tab root view
-            HomeView()
+            if hasFinishedOnboarding {
+                HomeView()
+            } else {
+                OnboardingView(hasFinishedOnboarding: $hasFinishedOnboarding)
+            }
         }
     }
 }
