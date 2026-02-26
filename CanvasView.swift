@@ -13,6 +13,7 @@ struct MotifInstance: Identifiable, Codable {
     var rotation  : Double   = 0.0   // degrees
     var tintColor : CodableColor? = nil
     var isLocked  : Bool     = false
+    var filledImageData: Data? = nil  // PNG of motif after per-region pixel fills
 
     init(imageName: String, position: CGPoint, scale: CGFloat = 1.0) {
         self.id        = UUID()
@@ -117,10 +118,19 @@ struct CanvasView: View {
     @State private var showToast      = false
 
     @State private var canvasSize: CGSize = UIScreen.main.bounds.size
+    // Safe area read from UIWindow so .ignoresSafeArea() on the root ZStack doesn't zero it out
+    @State private var safeTopInset: CGFloat = 0
+    // Snap drawing modes
+    @State private var snapLine   = false
+    @State private var snapCircle = false
 
     var isMotifMode: Bool { activeTool == .motifSelect }
 
-    private let motifNames = ["peacock_art","lotus_art","fish_art","sun_art"]
+    private let motifNames = [
+        "peacock_art","lotus_art","fish_art","sun_art",
+        "elephant_art","two_fish_art","leaf_art",
+        "border1_art","border2_art","border3_art"
+    ]
 
     // MARK: body
     var body: some View {
@@ -135,6 +145,8 @@ struct CanvasView: View {
                 // zIndex: above motif layer in pen mode, below in motif mode.
                 DrawingCanvas(
                     canvasView: $canvasView,
+                    snapLine: snapLine,
+                    snapCircle: snapCircle,
                     onStrokeBegin: {
                         // snapshot BEFORE the stroke
                         lastDrawing = canvasView.drawing
@@ -222,7 +234,7 @@ struct CanvasView: View {
 
                 // ── 4. Top bar ───────────────────────────────
                 VStack {
-                    topBar.padding(.top, geo.safeAreaInsets.top + 14)
+                    topBar.padding(.top, safeTopInset + 14)
                     Spacer()
                 }.zIndex(10)
 
@@ -307,6 +319,11 @@ struct CanvasView: View {
             .animation(.easeInOut(duration:0.15), value:railEraserOpen)
             .onAppear {
                 canvasSize = geo.size
+                // Read safe area from the actual window — unaffected by .ignoresSafeArea()
+                if let window = UIApplication.shared.connectedScenes
+                    .compactMap({ $0 as? UIWindowScene }).first?.windows.first {
+                    safeTopInset = window.safeAreaInsets.top
+                }
                 loadProject()
                 startAutosave()
             }
@@ -427,32 +444,62 @@ struct CanvasView: View {
         VStack(spacing:12) {
 
             // PEN
-            railBtn("pencil.tip", active:activeTool == .pen) {
-                if activeTool == .pen { railPenOpen.toggle() }
-                else { switchTo(.pen) }
+            railBtn("pencil.tip", active: activeTool == .pen && !snapLine && !snapCircle) {
+                if activeTool == .pen && !snapLine && !snapCircle {
+                    railPenOpen.toggle(); railEraserOpen = false
+                } else { snapLine = false; snapCircle = false; switchTo(.pen) }
             }
-            if activeTool == .pen && railPenOpen {
-                ForEach([2,4,8,14],id:\.self) { sz in
-                    BrushSizeBtn(size:CGFloat(sz), isSelected:abs(brushSize-CGFloat(sz))<0.5) {
-                        brushSize = CGFloat(sz); updateTool()
-                        railPenOpen = false  // collapse after pick
+            .overlay(alignment: .trailing) {
+                if activeTool == .pen && railPenOpen {
+                    HStack(spacing:6) {
+                        ForEach([2,4,8,14], id:\.self) { sz in
+                            BrushSizeBtn(size:CGFloat(sz), isSelected:abs(brushSize-CGFloat(sz))<0.5) {
+                                brushSize = CGFloat(sz); updateTool(); railPenOpen = false
+                            }
+                        }
                     }
+                    .padding(.horizontal,10).padding(.vertical,8)
+                    .background(railBg)
+                    .fixedSize()
+                    .offset(x: -64)   // shift left of the rail button
+                    .transition(.scale(scale:0.85, anchor:.trailing).combined(with:.opacity))
+                    .zIndex(30)
                 }
+            }
+
+            // Straight-line snap
+            railBtn("line.diagonal", active:snapLine) {
+                snapCircle = false; snapLine.toggle()
+                railPenOpen = false; switchTo(.pen)
+            }
+            // Circle snap
+            railBtn("circle", active:snapCircle) {
+                snapLine = false; snapCircle.toggle()
+                railPenOpen = false; switchTo(.pen)
             }
 
             dotDiv
 
             // ERASER
             railBtn("eraser.fill", active:activeTool == .eraser) {
-                if activeTool == .eraser { railEraserOpen.toggle() }
+                if activeTool == .eraser { railEraserOpen.toggle(); railPenOpen = false }
                 else { switchTo(.eraser) }
             }
-            if activeTool == .eraser && railEraserOpen {
-                ForEach([10,25,50],id:\.self) { sz in
-                    BrushSizeBtn(size:CGFloat(sz), isSelected:abs(eraserSize-CGFloat(sz))<0.5, isEraser:true) {
-                        eraserSize = CGFloat(sz); updateTool()
-                        railEraserOpen = false
+            .overlay(alignment: .trailing) {
+                if activeTool == .eraser && railEraserOpen {
+                    HStack(spacing:6) {
+                        ForEach([10,25,50], id:\.self) { sz in
+                            BrushSizeBtn(size:CGFloat(sz), isSelected:abs(eraserSize-CGFloat(sz))<0.5, isEraser:true) {
+                                eraserSize = CGFloat(sz); updateTool(); railEraserOpen = false
+                            }
+                        }
                     }
+                    .padding(.horizontal,10).padding(.vertical,8)
+                    .background(railBg)
+                    .fixedSize()
+                    .offset(x: -120)
+                    .transition(.scale(scale:0.85, anchor:.trailing).combined(with:.opacity))
+                    .zIndex(30)
                 }
             }
 
@@ -460,9 +507,7 @@ struct CanvasView: View {
 
             // COLOUR
             Button(action:{
-                withAnimation(.spring(response:0.25, dampingFraction:0.72)) {
-                    showPalette.toggle()
-                }
+                withAnimation(.spring(response:0.25, dampingFraction:0.72)) { showPalette.toggle() }
             }) {
                 ZStack {
                     Circle().strokeBorder(AngularGradient(colors:[.red,.orange,.yellow,.green,.cyan,.blue,.purple,.pink,.red],center:.center),lineWidth:3.5).frame(width:38,height:38)
@@ -482,29 +527,25 @@ struct CanvasView: View {
             railBtn("hand.point.up.left.fill", active:activeTool == .motifSelect) { switchTo(.motifSelect) }
 
             // LAYERS
-            railBtn("square.3.layers.3d.down.right", active:false) {
-                // Show layers panel — toggle a showLayers state
-                showLayers.toggle()
-            }
+            railBtn("square.3.layers.3d.down.right", active:false) { showLayers.toggle() }
 
-            // PASTE — FIX #6: only show while clipboard is non-nil; disappears after ONE paste
+            // PASTE
             if clipboard != nil {
-                railBtn("doc.on.clipboard", active:false) {
-                    pasteMotif()
-                    clipboard = nil  // FIX #6: remove button immediately after paste
-                }
-                .transition(.scale.combined(with:.opacity))
+                railBtn("doc.on.clipboard", active:false) { pasteMotif(); clipboard = nil }
+                    .transition(.scale.combined(with:.opacity))
             }
 
             dotDiv
 
-            // CLEAR ALL — FIX #5: clears canvas AND motifs together, undoable
+            // CLEAR ALL
             railBtn("arrow.counterclockwise", active:false) { clearAll() }
         }
         .padding(.vertical,16).padding(.horizontal,10)
         .background(railBg)
         .padding(.trailing,16).padding(.bottom,20)
         .animation(.easeInOut(duration:0.16), value:activeTool)
+        .animation(.easeInOut(duration:0.15), value:railPenOpen)
+        .animation(.easeInOut(duration:0.15), value:railEraserOpen)
         .animation(.easeInOut(duration:0.14), value:clipboard != nil)
     }
 
@@ -799,21 +840,117 @@ struct CanvasView: View {
     //         because we re-run BFS from scratch on the current drawing state.
 
     func handleFillTap(at loc: CGPoint) {
-        // Check if the tap hit a motif bounding box
-        if let hm = motifs.first(where: { m in
-            let hw = 110 * m.scale
+        // Check if the tap hit a motif bounding box — use the real frame size (220 * scale)
+        if let hm = motifs.last(where: { m in
+            let hw = 110 * m.scale   // half of 220 * scale
             return abs(loc.x-m.position.x)<hw && abs(loc.y-m.position.y)<hw
         }) {
             if let idx = motifs.firstIndex(where:{ $0.id == hm.id }) {
-                let old = motifs[idx].tintColor
-                let new = CodableColor(selectedColor)
-                motifs[idx].tintColor = new
-                pushUndo(.motifTinted(hm.id, old, new))
-                isDirty = true
+                fillMotifRegion(index: idx, tapLocation: loc)
             }
             return
         }
         applyCanvasFill(at: loc)
+    }
+
+    /// Per-region BFS fill on the motif's own pixel buffer so multiple regions
+    /// can each have independent colours (like the sun's inner disc vs. outer ring).
+    func fillMotifRegion(index: Int, tapLocation: CGPoint) {
+        guard index < motifs.count else { return }
+        let m = motifs[index]
+        let frameW = 220 * m.scale
+        let origin = CGPoint(x: m.position.x - frameW/2, y: m.position.y - frameW/2)
+
+        let localX = tapLocation.x - origin.x
+        let localY = tapLocation.y - origin.y
+        guard localX >= 0, localY >= 0, localX < frameW, localY < frameW else { return }
+
+        let pxScale = UIScreen.main.scale
+        let pw = Int(frameW * pxScale), ph = Int(frameW * pxScale)
+        guard pw > 0 else { return }
+
+        var pixels = [UInt8](repeating: 0, count: pw * ph * 4)
+        guard let ctx = CGContext(data: &pixels, width: pw, height: ph,
+                                  bitsPerComponent: 8, bytesPerRow: pw*4,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return }
+
+        // FIX 6: transparent base so PNG has alpha — view uses .blendMode(.multiply)
+        // which makes white/transparent areas show the canvas behind, fixing the white-square issue.
+        ctx.clear(CGRect(x:0,y:0,width:pw,height:ph))
+        // Fill with white so line-art (black on white) renders correctly before BFS
+        ctx.setFillColor(UIColor.white.cgColor)
+        ctx.fill(CGRect(x:0,y:0,width:pw,height:ph))
+
+        // FIX 11+12: if we already have accumulated fills, start FROM that image —
+        // this preserves all previous region colours instead of resetting to white
+        if let existingData = m.filledImageData,
+           let existingUI   = UIImage(data: existingData),
+           let existingCG   = existingUI.cgImage {
+            ctx.draw(existingCG, in: CGRect(x:0,y:0,width:pw,height:ph))
+        } else {
+            // First fill: draw base motif image
+            if let cg = UIImage(named: m.imageName)?.cgImage {
+                ctx.draw(cg, in: CGRect(x:0,y:0,width:pw,height:ph))
+            }
+        }
+
+        // Always redraw the outline art on top so line-art stays sharp
+        if let cg = UIImage(named: m.imageName)?.cgImage {
+            // Draw at multiply blend so transparent areas stay transparent
+            ctx.saveGState()
+            ctx.setBlendMode(.multiply)
+            ctx.draw(cg, in: CGRect(x:0,y:0,width:pw,height:ph))
+            ctx.restoreGState()
+        }
+
+        let tapPx = Int(localX * pxScale), tapPy = Int(localY * pxScale)
+        guard tapPx >= 0, tapPy >= 0, tapPx < pw, tapPy < ph else { return }
+
+        let sIdx = (tapPy * pw + tapPx) * 4
+        let sR = pixels[sIdx], sG = pixels[sIdx+1], sB = pixels[sIdx+2]
+
+        // Don't fill on very dark outline pixels
+        if Int(sR)+Int(sG)+Int(sB) < 100 { return }
+
+        var fr:CGFloat=0, fg:CGFloat=0, fb:CGFloat=0, fa:CGFloat=0
+        UIColor(selectedColor).getRed(&fr, green:&fg, blue:&fb, alpha:&fa)
+        let fR=UInt8(fr*255), fG=UInt8(fg*255), fB=UInt8(fb*255)
+
+        // Same colour already? skip
+        if sR==fR && sG==fG && sB==fB { return }
+
+        func pixMatch(_ i:Int)->Bool {
+            if Int(pixels[i])+Int(pixels[i+1])+Int(pixels[i+2]) < 100 { return false }
+            return abs(Int(pixels[i])-Int(sR))<=40
+                && abs(Int(pixels[i+1])-Int(sG))<=40
+                && abs(Int(pixels[i+2])-Int(sB))<=40
+        }
+
+        var visited = [Bool](repeating: false, count: pw*ph)
+        var queue = [(tapPx, tapPy)]; var head = 0
+        visited[tapPy*pw+tapPx] = true
+        let cap = pw*ph          // no arbitrary cap — let BFS fill the whole closed region
+        while head < queue.count && head < cap {
+            let (x,y) = queue[head]; head+=1
+            let k = (y*pw+x)*4
+            pixels[k]=fR; pixels[k+1]=fG; pixels[k+2]=fB; pixels[k+3]=255
+            for (dx,dy) in [(1,0),(-1,0),(0,1),(0,-1)] {
+                let nx=x+dx, ny=y+dy
+                guard nx>=0,ny>=0,nx<pw,ny<ph else { continue }
+                let ni=ny*pw+nx
+                if !visited[ni] && pixMatch(ni*4) { visited[ni]=true; queue.append((nx,ny)) }
+            }
+        }
+
+        guard let outCG = ctx.makeImage() else { return }
+        let filledUI = UIImage(cgImage: outCG, scale: pxScale, orientation: .up)
+        // FIX 12: store the accumulated fill image — preserved on duplicate/move/save
+        let oldTint = m.tintColor
+        motifs[index].filledImageData = filledUI.pngData()
+        pushUndo(.motifTinted(m.id, oldTint, CodableColor(selectedColor)))
+        isDirty = true
     }
 
     func applyCanvasFill(at tap: CGPoint) {
@@ -829,7 +966,7 @@ struct CanvasView: View {
                                   bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)
         else { return }
 
-        // Render: paper background first, then ink strokes
+        // Render paper + strokes at 1× so pixel coords == view point coords
         ctx.setFillColor(UIColor(red:0.96,green:0.94,blue:0.89,alpha:1).cgColor)
         ctx.fill(CGRect(x:0,y:0,width:w,height:h))
         if let cg = canvasView.drawing.image(from:CGRect(origin:.zero,size:sz),scale:1.0).cgImage {
@@ -845,15 +982,20 @@ struct CanvasView: View {
         let fillR=UInt8(fr*255),fillG=UInt8(fg*255),fillB=UInt8(fb*255)
         guard !(sR==fillR && sG==fillG && sB==fillB) else { return }
 
-        let tol = 38
+        // Tight tolerance so ink lines (dark pixels) act as walls
+        let tol = 22
         func isMatch(_ i:Int)->Bool {
-            abs(Int(pixels[i])-Int(sR))<=tol && abs(Int(pixels[i+1])-Int(sG))<=tol && abs(Int(pixels[i+2])-Int(sB))<=tol
+            abs(Int(pixels[i])-Int(sR))<=tol
+            && abs(Int(pixels[i+1])-Int(sG))<=tol
+            && abs(Int(pixels[i+2])-Int(sB))<=tol
         }
 
-        // BFS — scanline variant for performance
+        // Hard cap: 600k ≈ a large hand-drawn shape on iPad canvas.
+        // This allows filling big shapes while still preventing unbounded open-canvas fills.
+        let bfsHardCap = 600_000
         var visited = [Bool](repeating:false, count:w*h)
         var queue = [(tx,ty)]; var head = 0
-        while head < queue.count {
+        while head < queue.count && head < bfsHardCap {
             let (x,y)=queue[head]; head+=1
             let key=y*w+x
             if visited[key] { continue }
@@ -865,20 +1007,15 @@ struct CanvasView: View {
             if x<w-1 { queue.append((x+1,y)) }
             if y>0   { queue.append((x,y-1)) }
             if y<h-1 { queue.append((x,y+1)) }
-            if head>500_000 { break }
         }
         guard visited.contains(true) else { return }
-        // If BFS filled almost the whole screen, there's no closed boundary — abort.
         let filledCount = visited.filter{$0}.count
-        guard filledCount < (w * h * 9 / 10) else { return }
+        // If BFS hit the cap it means the region is open/unbounded → don't fill
+        guard filledCount < bfsHardCap else { return }
 
-        // FIX #7: rebuild drawing from scratch so old fill is completely replaced.
-        // We keep non-fill strokes and add new scanline strokes for the filled region.
+        // Build scan-line PKStrokes
         let before = canvasView.drawing
         let inkColor = UIColor(selectedColor)
-
-        // Build scan-line strokes — one per horizontal run of changed pixels.
-        // Use size:4pt strokes so runs overlap slightly → solid fill, no gaps.
         var newStrokes: [PKStroke] = before.strokes
         var y = 0
         while y < h {
@@ -887,20 +1024,21 @@ struct CanvasView: View {
                 let inFill = x < w && visited[y*w+x]
                 if inFill, runStart == nil { runStart = x }
                 if !inFill, let rs = runStart {
-                    let p0=CGPoint(x:CGFloat(rs), y:CGFloat(y))
-                    let p1=CGPoint(x:CGFloat(x-1),y:CGFloat(y))
+                    let p0=CGPoint(x:CGFloat(rs),  y:CGFloat(y))
+                    let p1=CGPoint(x:CGFloat(x-1), y:CGFloat(y))
                     let mk = { (pt:CGPoint, t:Double) in
-                        PKStrokePoint(location:pt, timeOffset:t,
-                                      size:CGSize(width:4,height:4),
+                        PKStrokePoint(location:pt,timeOffset:t,
+                                      size:CGSize(width:2,height:2),  // thinner = no square bleed at stroke ends
                                       opacity:1,force:1,azimuth:0,altitude:.pi/2)
                     }
-                    let path = PKStrokePath(controlPoints:[mk(p0,0),mk(p1,0.001)], creationDate:Date())
-                    newStrokes.append(PKStroke(ink:PKInk(.pen,color:inkColor),path:path))
+                    newStrokes.append(PKStroke(ink:PKInk(.pen,color:inkColor),
+                                               path:PKStrokePath(controlPoints:[mk(p0,0),mk(p1,0.001)],
+                                                                 creationDate:Date())))
                     runStart = nil
                 }
                 x += 1
             }
-            y += 1  // every row — full solid fill like MS Paint
+            y += 1
         }
         var newD = PKDrawing(); newD.strokes = newStrokes
         canvasView.drawing = newD
@@ -1021,7 +1159,9 @@ struct CanvasView: View {
     }
     func duplicateMotif(_ m: MotifInstance) {
         var c = MotifInstance(imageName:m.imageName, position:CGPoint(x:m.position.x+50,y:m.position.y+50), scale:m.scale)
-        c.tintColor = m.tintColor
+        c.tintColor       = m.tintColor
+        c.rotation        = m.rotation
+        c.filledImageData = m.filledImageData
         motifs.append(c); selectedMotifID = c.id; activeTool = .motifSelect
         pushUndo(.motifAdded(c)); isDirty = true
     }
@@ -1036,7 +1176,9 @@ struct CanvasView: View {
     func pasteMotif() {
         guard let src = clipboard else { return }
         var c = MotifInstance(imageName:src.imageName, position:CGPoint(x:canvasSize.width/2+30,y:canvasSize.height/2+30), scale:src.scale)
-        c.tintColor = src.tintColor
+        c.tintColor       = src.tintColor
+        c.rotation        = src.rotation
+        c.filledImageData = src.filledImageData
         motifs.append(c); selectedMotifID = c.id; activeTool = .motifSelect
         pushUndo(.motifAdded(c)); isDirty = true
     }
@@ -1049,13 +1191,23 @@ struct CanvasView: View {
             UIColor(red:0.96,green:0.94,blue:0.89,alpha:1).setFill()
             UIRectFill(CGRect(origin:.zero,size:size))
             for m in motifs {
-                guard let ui = UIImage(named:m.imageName) else { continue }
                 let w=220*m.scale, h=220*m.scale
-                let rect=CGRect(x:m.position.x-w/2,y:m.position.y-h/2,width:w,height:h)
-                if let t = m.tintColor {
-                    t.uiColor.setFill(); UIRectFill(rect)
+                let rect=CGRect(x:-w/2, y:-h/2, width:w, height:h)
+                let ctx = UIGraphicsGetCurrentContext()!
+                ctx.saveGState()
+                ctx.translateBy(x: m.position.x, y: m.position.y)
+                ctx.rotate(by: CGFloat(m.rotation) * .pi / 180)
+                if let data = m.filledImageData, let ui = UIImage(data: data) {
+                    ui.draw(in: rect)
+                } else {
+                    if let t = m.tintColor {
+                        t.uiColor.setFill(); UIRectFill(rect)
+                    }
+                    if let ui = UIImage(named: m.imageName) {
+                        ui.draw(in: rect, blendMode: .multiply, alpha: 1.0)
+                    }
                 }
-                ui.draw(in:rect, blendMode:.multiply, alpha:1.0)
+                ctx.restoreGState()
             }
             canvasView.drawing.image(from:CGRect(origin:.zero,size:size),scale:UIScreen.main.scale)
                 .draw(in:CGRect(origin:.zero,size:size))
@@ -1182,44 +1334,48 @@ struct MotifItemView: View {
     let onFillTap:    () -> Void
     let onCut, onCopy, onDuplicate, onToggleLock, onDelete: () -> Void
     let onScaleDelta: (CGFloat) -> Void
-    let onRotateEnd: (Double, Double) -> Void   // (fromDeg, toDeg)
+    let onRotateEnd: (Double, Double) -> Void
 
-    @State private var dragStart: CGPoint? = nil
-    @State private var scaleStart: CGFloat = 1.0
-    @State private var rotationStart: Double = 0.0
+    @State private var dragStart:    CGPoint? = nil
+    // FIX 9: store the committed rotation at gesture start; only add the delta each frame
+    @State private var rotBase:      Double   = 0.0
+    @State private var liveRotDelta: Double   = 0.0   // extra degrees being dragged right now
+    @State private var rotFromDeg:   Double   = 0.0   // for undo
 
     private var frameW: CGFloat { 220 * motif.scale }
+    private var totalRotation: Double { motif.rotation + liveRotDelta }
 
     var body: some View {
         ZStack {
-            // FIX #2: tint the motif by rendering coloured rect masked by the image's alpha
-            if let tc = motif.tintColor {
-                Rectangle().fill(tc.color)
-                    .mask(
-                        Image(motif.imageName)
-                            .renderingMode(.original)
-                            .resizable().scaledToFit()
-                    )
+            // FIX 10+11+12: always render from filledImageData when present — this is the
+            // accumulated multi-region fill bitmap. Never reset it to white on render.
+            if let data = motif.filledImageData, let ui = UIImage(data: data) {
+                Image(uiImage: ui)
+                    .resizable().scaledToFit()
+                    .blendMode(.multiply)   // FIX 6: white areas become transparent so motifs don't occlude each other
+            } else {
+                if let tc = motif.tintColor {
+                    Rectangle().fill(tc.color)
+                        .mask(Image(motif.imageName).renderingMode(.original)
+                                .resizable().scaledToFit())
+                }
+                Image(motif.imageName)
+                    .renderingMode(.original)
+                    .resizable().scaledToFit()
+                    .blendMode(.multiply)
             }
-            // Motif image on top (transparent PNG outline)
-            Image(motif.imageName)
-                .renderingMode(.original)
-                .resizable().scaledToFit()
-                .blendMode(.multiply)
         }
         .frame(width:frameW, height:frameW)
-        .rotationEffect(.degrees(motif.rotation))
+        .rotationEffect(.degrees(totalRotation))   // FIX 9: stable rotation from motif centre
         .opacity(motif.isLocked ? 0.4 : 1.0)
         .overlay(selectionBorder)
         .position(motif.position)
         .contentShape(Rectangle())
-        // FIX #7: onTapGesture — unconditional so tap always fires
         .onTapGesture {
             if activeTool == .fill { onFillTap() }
             else { onTap() }
         }
         .contextMenu { contextMenuItems }
-        // FIX #4: drag only moves motif when in motif mode AND this motif is selected/tapped
         .simultaneousGesture(
             DragGesture(minimumDistance:6, coordinateSpace:.global)
                 .onChanged { val in
@@ -1233,24 +1389,25 @@ struct MotifItemView: View {
                     dragStart = nil
                 }
         )
-        // Pinch scale
-        .simultaneousGesture(
-            MagnificationGesture()
-                .onChanged { val in
-                    guard !motif.isLocked else { return }
-                    onScaleDelta(val)
-                }
+        .simultaneousGesture(MagnificationGesture()
+            .onChanged { val in
+                guard !motif.isLocked else { return }
+                onScaleDelta(val)
+            }
         )
-        // Rotation gesture
+        // FIX 9: RotationGesture reports cumulative angle from gesture start each frame.
+        // We snapshot rotBase at start and add (currentAngle - startAngle) to it.
         .simultaneousGesture(
             RotationGesture()
                 .onChanged { angle in
                     guard !motif.isLocked, isMotifMode else { return }
-                    motif.rotation += angle.degrees - rotationStart
-                    rotationStart = angle.degrees
+                    liveRotDelta = angle.degrees
                 }
                 .onEnded { angle in
-                    rotationStart = 0
+                    let from = motif.rotation
+                    motif.rotation += liveRotDelta
+                    liveRotDelta = 0
+                    onRotateEnd(from, motif.rotation)
                 }
         )
     }

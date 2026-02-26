@@ -45,13 +45,16 @@ struct HomeView: View {
     // MARK: - Hero Header
     var heroHeader: some View {
         VStack(spacing:0) {
-            // FIX #3: NO border around the whole HomeView — just the decorative gold stripe
-            LinearGradient(
-                colors:[Color(red:0.85,green:0.55,blue:0.10),
-                        Color(red:0.85,green:0.23,blue:0.18),
-                        Color(red:0.85,green:0.55,blue:0.10)],
-                startPoint:.leading, endPoint:.trailing)
-                .frame(height:3)
+            // Decorative diamond row — replaces the old orange gradient stripe
+            HStack(spacing:0) {
+                ForEach(0..<44, id:\.self) { i in
+                    Group {
+                        if i%3==1 { Diamond().fill(Color(red:0.75,green:0.45,blue:0.05).opacity(0.55)).frame(width:5,height:5) }
+                        else       { Circle().fill(Color(red:0.75,green:0.45,blue:0.05).opacity(0.2)).frame(width:3,height:3) }
+                    }.frame(maxWidth:.infinity)
+                }
+            }
+            .frame(height:12)
 
             HStack(alignment:.top) {
                 VStack(alignment:.leading, spacing:6) {
@@ -232,23 +235,52 @@ func madhubaniCardBg(r: CGFloat) -> some View {
         RoundedRectangle(cornerRadius:r,style:.continuous)
             .fill(Color(red:0.99,green:0.97,blue:0.91))
         RoundedRectangle(cornerRadius:r,style:.continuous)
-            .stroke(Color(red:0.80,green:0.50,blue:0.08).opacity(0.35), lineWidth:1)
+            .stroke(Color.mithilaGold.opacity(0.55), lineWidth:1.5)
     }
     .shadow(color:Color(red:0.55,green:0.28,blue:0.00).opacity(0.08),radius:6,x:0,y:3)
 }
 
-// MARK: - Learn Card (FIX #5: uses madhubaniCardBg with consistent 1pt border)
+// MARK: - Learn Card — image fills full card top, consistent 1.5pt gold border via madhubaniCardBg
 struct LearnCard: View {
     let item:LearnItem; let action:()->Void
+    private let assetNames = ["history_art","kachni_art","bharni_art","godna_art","tantrik_art","kohbar_art"]
+    private var assetName: String {
+        let idx = LearnItem.all.firstIndex(where:{ $0.id == item.id }) ?? 0
+        return assetNames[idx % assetNames.count]
+    }
     var body: some View {
         Button(action:action) {
-            VStack(alignment:.leading,spacing:0) {
-                Image(systemName:item.icon).font(.system(size:26)).foregroundColor(.mithilaGold).padding(.bottom,8)
-                Spacer()
-                Text(item.title).font(.custom("Georgia",size:16).bold()).foregroundColor(Color(red:0.18,green:0.07,blue:0.01))
-                Text(item.subtitle).font(.system(size:10,weight:.medium)).foregroundColor(Color(red:0.55,green:0.28,blue:0.04)).padding(.top,2)
+            VStack(alignment:.leading, spacing:0) {
+                // Portrait image fills top — taller so card looks like a painting
+                ZStack {
+                    Color(red:0.95,green:0.92,blue:0.84)
+                    if UIImage(named:assetName) != nil {
+                        Image(assetName)
+                            .renderingMode(.original)
+                            .resizable().scaledToFill()
+                            .blendMode(.multiply)
+                    } else {
+                        Image(systemName:item.icon)
+                            .font(.system(size:40)).foregroundColor(.mithilaGold.opacity(0.6))
+                    }
+                }
+                .frame(width:140, height:160)  // portrait: taller than wide
+                .clipped()
+
+                // Title + subtitle
+                VStack(alignment:.leading, spacing:2) {
+                    Text(item.title)
+                        .font(.custom("Georgia",size:13).bold())
+                        .foregroundColor(Color(red:0.18,green:0.07,blue:0.01))
+                    Text(item.subtitle)
+                        .font(.system(size:10,weight:.medium))
+                        .foregroundColor(Color(red:0.55,green:0.28,blue:0.04))
+                }
+                .padding(.horizontal,10).padding(.vertical,8)
             }
-            .padding(18).frame(width:160,height:160).background(madhubaniCardBg(r:20))
+            .frame(width:140)
+            .background(madhubaniCardBg(r:16))
+            .clipShape(RoundedRectangle(cornerRadius:16,style:.continuous))
         }
     }
 }
@@ -259,13 +291,22 @@ struct ThemeCard: View {
         Button(action:action) {
             VStack(spacing:8) {
                 ZStack {
-                    Circle().fill(Color.mithilaGold.opacity(0.1)).frame(width:58,height:58)
-                    Circle().stroke(Color.mithilaGold.opacity(0.3),lineWidth:1.5).frame(width:58,height:58)
-                    Image(systemName:item.icon).font(.system(size:24)).foregroundColor(.mithilaGold)
+                    Circle()
+                        .fill(Color.mithilaGold.opacity(0.1))
+                        .frame(width:62, height:62)
+                    Circle()
+                        .stroke(Color.mithilaGold.opacity(0.5), lineWidth:1.5)
+                        .frame(width:62, height:62)
+                    Image(systemName:item.icon)
+                        .font(.system(size:26)).foregroundColor(.mithilaGold)
                 }
-                Text(item.title).font(.system(size:11,weight:.bold)).foregroundColor(Color(red:0.18,green:0.07,blue:0.01)).multilineTextAlignment(.center)
+                Text(item.title)
+                    .font(.system(size:11,weight:.bold))
+                    .foregroundColor(Color(red:0.18,green:0.07,blue:0.01))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
             }
-            .frame(width:100,height:120).background(madhubaniCardBg(r:16))
+            .frame(width:100,height:110).background(madhubaniCardBg(r:16))
         }
     }
 }
@@ -284,6 +325,19 @@ struct LearnDetailModal: View {
         case "Tantrik":  return [("star.of.david","Yantras"),("bolt.fill","Kali"),("moon.fill","Shakti"),("flame.fill","Shiva"),("circle.fill","Mandalas"),("infinity","Cosmic power")]
         case "Kohbar":   return [("heart.fill","Wedding art"),("fish.fill","Fish motif"),("leaf.fill","Lotus"),("tortoise.fill","Turtle"),("bird.fill","Paired birds"),("arrow.up.right","Bamboo")]
         default:         return [("paintbrush","Madhubani"),("leaf","Nature"),("sun.max","Sacred"),("star","Tradition"),("drop","Colour"),("circle","Pattern")]
+        }
+    }
+
+    // FIX 1: 2 unique asset images per learn card, no names shown
+    private var learnGlimpseImages: [String] {
+        switch item.title {
+        case "History":  return ["history1_art", "history2_art"]
+        case "Kachni":   return ["kachni1_art",  "kachni2_art"]
+        case "Bharni":   return ["bharni1_art",  "bharni2_art"]
+        case "Godna":    return ["godna1_art",   "godna2_art"]
+        case "Tantrik":  return ["tantrik1_art", "tantrik2_art"]
+        case "Kohbar":   return ["kohbar1_art",  "kohbar2_art"]
+        default:         return ["history1_art", "history2_art"]
         }
     }
 
@@ -310,29 +364,30 @@ struct LearnDetailModal: View {
                             .font(.system(size:15)).lineSpacing(6).foregroundColor(Color(red:0.22,green:0.10,blue:0.02))
                     }.padding(24)
 
-                    // Glimpses — horizontal scroll #11
+                    // Glimpses — 2 portrait images, no border, plain
                     VStack(alignment:.leading, spacing:10) {
                         Text("Glimpses")
                             .font(.system(size:13,weight:.bold)).foregroundColor(.mithilaGold)
                             .padding(.horizontal,24)
                         ScrollView(.horizontal, showsIndicators:false) {
-                            HStack(spacing:12) {
-                                ForEach(glimpses, id:\.label) { g in
-                                    VStack(spacing:8) {
+                            HStack(spacing:16) {
+                                ForEach(learnGlimpseImages, id:\.self) { assetName in
+                                    if UIImage(named:assetName) != nil {
+                                        Image(assetName)
+                                            .renderingMode(.original)
+                                            .resizable().scaledToFill()
+                                            .frame(width:110, height:160)   // portrait
+                                            .clipped()
+                                            .clipShape(RoundedRectangle(cornerRadius:10,style:.continuous))
+                                    } else {
+                                        // placeholder when image not yet added
                                         ZStack {
-                                            RoundedRectangle(cornerRadius:14)
-                                                .fill(Color.mithilaGold.opacity(0.08))
-                                            RoundedRectangle(cornerRadius:14)
-                                                .stroke(Color.mithilaGold.opacity(0.25),lineWidth:1)
-                                            Image(systemName:g.icon).font(.system(size:32))
-                                                .foregroundColor(Color.mithilaGold.opacity(0.85))
+                                            RoundedRectangle(cornerRadius:10)
+                                                .fill(Color(red:0.92,green:0.88,blue:0.80))
+                                            Image(systemName:item.icon)
+                                                .font(.system(size:38)).foregroundColor(.mithilaGold.opacity(0.5))
                                         }
-                                        .frame(width:100,height:90)
-                                        Text(g.label)
-                                            .font(.system(size:10,weight:.medium))
-                                            .foregroundColor(Color(red:0.30,green:0.14,blue:0.02))
-                                            .multilineTextAlignment(.center)
-                                            .frame(width:100)
+                                        .frame(width:110, height:160)
                                     }
                                 }
                             }
@@ -366,14 +421,32 @@ struct ThemeDetailModal: View {
         }
     }
 
+    // FIX 2: 2 unique asset images per theme card, no names shown
+    private var themeGlimpseImages: [String] {
+        switch item.title {
+        case "Mythology":  return ["mythology1_art",  "mythology2_art"]
+        case "Marriage":   return ["marriage1_art",   "marriage2_art"]
+        case "Nature":     return ["nature1_art",     "nature2_art"]
+        case "Fish":       return ["fish1_art",       "fish2_art"]
+        case "Lotus":      return ["lotus1_art",      "lotus2_art"]
+        case "Peacock":    return ["peacock1_art",    "peacock2_art"]
+        case "Sun & Moon": return ["sunmoon1_art",    "sunmoon2_art"]
+        case "Bamboo":     return ["bamboo1_art",     "bamboo2_art"]
+        case "Turtle":     return ["turtle1_art",     "turtle2_art"]
+        case "Snake":      return ["snake1_art",      "snake2_art"]
+        default:           return ["peacock_art",     "lotus_art"]
+        }
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing:22) {
                     ZStack {
-                        Circle().fill(Color.mithilaGold.opacity(0.1)).frame(width:110,height:110)
-                        Circle().stroke(Color.mithilaGold.opacity(0.3),lineWidth:2).frame(width:110,height:110)
-                        Image(systemName:item.icon).font(.system(size:48)).foregroundColor(.mithilaGold)
+                        Circle().fill(Color.mithilaGold.opacity(0.08)).frame(width:120,height:120)
+                        Circle().stroke(Color.mithilaGold.opacity(0.45),lineWidth:2.5).frame(width:120,height:120)
+                        Circle().stroke(Color.mithilaGold.opacity(0.18),lineWidth:1).frame(width:108,height:108)
+                        Image(systemName:item.icon).font(.system(size:52)).foregroundColor(.mithilaGold)
                     }.padding(.top,36)
 
                     VStack(spacing:6) {
@@ -388,29 +461,29 @@ struct ThemeDetailModal: View {
                         Text(item.significance).font(.system(size:14)).foregroundColor(.secondary).lineSpacing(5)
                     }.padding(.horizontal,28)
 
-                    // Glimpses #11
+                    // Glimpses — 2 portrait images, no border, plain
                     VStack(alignment:.leading, spacing:10) {
                         Text("Glimpses")
                             .font(.system(size:13,weight:.bold)).foregroundColor(.mithilaGold)
                             .padding(.horizontal,28)
                         ScrollView(.horizontal, showsIndicators:false) {
-                            HStack(spacing:12) {
-                                ForEach(glimpses, id:\.label) { g in
-                                    VStack(spacing:8) {
+                            HStack(spacing:16) {
+                                ForEach(themeGlimpseImages, id:\.self) { assetName in
+                                    if UIImage(named:assetName) != nil {
+                                        Image(assetName)
+                                            .renderingMode(.original)
+                                            .resizable().scaledToFill()
+                                            .frame(width:110, height:160)   // portrait
+                                            .clipped()
+                                            .clipShape(RoundedRectangle(cornerRadius:10,style:.continuous))
+                                    } else {
                                         ZStack {
-                                            RoundedRectangle(cornerRadius:14)
-                                                .fill(Color.mithilaGold.opacity(0.08))
-                                            RoundedRectangle(cornerRadius:14)
-                                                .stroke(Color.mithilaGold.opacity(0.25),lineWidth:1)
-                                            Image(systemName:g.icon).font(.system(size:32))
-                                                .foregroundColor(Color.mithilaGold.opacity(0.85))
+                                            RoundedRectangle(cornerRadius:10)
+                                                .fill(Color(red:0.92,green:0.88,blue:0.80))
+                                            Image(systemName:item.icon)
+                                                .font(.system(size:38)).foregroundColor(.mithilaGold.opacity(0.5))
                                         }
-                                        .frame(width:100,height:90)
-                                        Text(g.label)
-                                            .font(.system(size:10,weight:.medium))
-                                            .foregroundColor(Color(red:0.30,green:0.14,blue:0.02))
-                                            .multilineTextAlignment(.center)
-                                            .frame(width:100)
+                                        .frame(width:110, height:160)
                                     }
                                 }
                             }
