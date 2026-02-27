@@ -12,19 +12,24 @@ struct HomeView: View {
     var body: some View {
         NavigationStack {
             ZStack(alignment: .top) {
-                // FIX #4: single unified background — no difference between grid area and rest
                 Color(red:0.96,green:0.94,blue:0.89).ignoresSafeArea()
-                ScrollView(showsIndicators: false) {
-                    VStack(alignment:.leading, spacing:0) {
-                        heroHeader
-                        madhubaniDivider.padding(.top,4)
-                        createNewSection.padding(.top,26)
-                        madhubaniDivider.padding(.top,26)
-                        learnSection.padding(.top,26)
-                        madhubaniDivider.padding(.top,26)
-                        themesSection.padding(.top,26)
-                        Spacer(minLength:80)
+                GeometryReader { proxy in
+                    ScrollView(showsIndicators: false) {
+                        VStack(alignment:.leading, spacing:0) {
+                            heroHeader
+                                // top padding = real safe area so header sits just below status bar
+                                .padding(.top, proxy.safeAreaInsets.top)
+                            madhubaniDivider.padding(.top,4)
+                            createNewSection.padding(.top,26)
+                            madhubaniDivider.padding(.top,26)
+                            learnSection.padding(.top,26)
+                            madhubaniDivider.padding(.top,26)
+                            themesSection.padding(.top,26)
+                            Spacer(minLength:80)
+                        }
                     }
+                    // clip so content cannot scroll above the status bar
+                    .clipped()
                 }
             }
             .navigationBarHidden(true)
@@ -81,7 +86,7 @@ struct HomeView: View {
                         .foregroundColor(Color(red:0.55,green:0.30,blue:0.05).opacity(0.45))
                 }.padding(.top,4)
             }
-            .padding(.horizontal,24).padding(.top,52).padding(.bottom,20)
+            .padding(.horizontal,24).padding(.top,16).padding(.bottom,20)
         }
     }
 

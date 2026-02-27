@@ -46,8 +46,9 @@ enum UndoItem {
     case motifDeleted(MotifInstance, Int)
     case motifMoved(UUID, CGPoint, CGPoint)
     case motifScaled(UUID, CGFloat, CGFloat)
-    case motifRotated(UUID, Double, Double)      // id, from, to
+    case motifRotated(UUID, Double, Double)
     case motifTinted(UUID, CodableColor?, CodableColor?)
+    case motifFilled(UUID, Data?, Data?)        // filledImageData before → after
     case clearAll(PKDrawing, [MotifInstance])
 }
 
@@ -129,7 +130,7 @@ struct CanvasView: View {
     private let motifNames = [
         "peacock_art","lotus_art","fish_art","sun_art",
         "elephant_art","two_fish_art","leaf_art",
-        "border1_art","border2_art","border3_art"
+        "border1_art","border2_art"
     ]
 
     // MARK: body
@@ -588,12 +589,16 @@ struct CanvasView: View {
                 .stroke(Color.mithilaGold.opacity(0.2), lineWidth:0.8)
                 .frame(width:208,height:208)
 
-            // Selected colour in the centre
-            ZStack {
-                Circle().fill(selectedColor).frame(width:50,height:50)
-                Circle().stroke(Color.white,lineWidth:2.5).frame(width:50,height:50)
-                Circle().stroke(Color.mithilaGold.opacity(0.5),lineWidth:1).frame(width:44,height:44)
+            // Selected colour in the centre — ColorPicker label IS the circle, tap opens system popover directly
+            ColorPicker(selection: $selectedColor, supportsOpacity: false) {
+                ZStack {
+                    Circle().fill(selectedColor).frame(width:50,height:50)
+                    Circle().stroke(Color.white,lineWidth:2.5).frame(width:50,height:50)
+                    Circle().stroke(Color.mithilaGold.opacity(0.5),lineWidth:1).frame(width:44,height:44)
+                }
             }
+            .frame(width:50,height:50)
+            .labelsHidden()
 
             // Colour dots arranged in a circle
             ForEach(Array(madhubaniPalette.enumerated()), id:\.offset) { i, entry in
@@ -946,10 +951,10 @@ struct CanvasView: View {
 
         guard let outCG = ctx.makeImage() else { return }
         let filledUI = UIImage(cgImage: outCG, scale: pxScale, orientation: .up)
-        // FIX 12: store the accumulated fill image — preserved on duplicate/move/save
-        let oldTint = m.tintColor
-        motifs[index].filledImageData = filledUI.pngData()
-        pushUndo(.motifTinted(m.id, oldTint, CodableColor(selectedColor)))
+        let dataBefore = motifs[index].filledImageData
+        let dataAfter  = filledUI.pngData()
+        motifs[index].filledImageData = dataAfter
+        pushUndo(.motifFilled(m.id, dataBefore, dataAfter))
         isDirty = true
     }
 
@@ -990,28 +995,35 @@ struct CanvasView: View {
             && abs(Int(pixels[i+2])-Int(sB))<=tol
         }
 
-        // Hard cap: 600k ≈ a large hand-drawn shape on iPad canvas.
-        // This allows filling big shapes while still preventing unbounded open-canvas fills.
-        let bfsHardCap = 600_000
+        // BFS cap: if we exceed this the region is open/unbounded → abort entirely, don't fill
+        let bfsHardCap = 500_000
         var visited = [Bool](repeating:false, count:w*h)
         var queue = [(tx,ty)]; var head = 0
-        while head < queue.count && head < bfsHardCap {
+        var filledCount = 0
+        var isOpen = false
+        outerLoop: while head < queue.count {
             let (x,y)=queue[head]; head+=1
             let key=y*w+x
             if visited[key] { continue }
             let idx=key*4
             if !isMatch(idx) { continue }
             visited[key]=true
-            pixels[idx]=fillR; pixels[idx+1]=fillG; pixels[idx+2]=fillB; pixels[idx+3]=255
+            filledCount += 1
+            if filledCount >= bfsHardCap { isOpen = true; break outerLoop }
             if x>0   { queue.append((x-1,y)) }
             if x<w-1 { queue.append((x+1,y)) }
             if y>0   { queue.append((x,y-1)) }
             if y<h-1 { queue.append((x,y+1)) }
         }
-        guard visited.contains(true) else { return }
-        let filledCount = visited.filter{$0}.count
-        // If BFS hit the cap it means the region is open/unbounded → don't fill
-        guard filledCount < bfsHardCap else { return }
+        // Open region or nothing matched → do nothing
+        guard !isOpen, filledCount > 0 else { return }
+
+        // Now write fill colour only to visited pixels
+        for key in 0..<(w*h) {
+            guard visited[key] else { continue }
+            let idx = key*4
+            pixels[idx]=fillR; pixels[idx+1]=fillG; pixels[idx+2]=fillB; pixels[idx+3]=255
+        }
 
         // Build scan-line PKStrokes
         let before = canvasView.drawing
@@ -1126,6 +1138,13 @@ struct CanvasView: View {
             if isUndo { redoStack.append(.motifTinted(id, old, new)) }
             else       { undoStack.append(.motifTinted(id, old, new)) }
 
+        case .motifFilled(let id, let before, let after):
+            if let i = motifs.firstIndex(where:{$0.id==id}) {
+                motifs[i].filledImageData = isUndo ? before : after
+            }
+            if isUndo { redoStack.append(.motifFilled(id, before, after)) }
+            else       { undoStack.append(.motifFilled(id, before, after)) }
+
         case .motifRotated(let id, let from, let to):
             if let i = motifs.firstIndex(where:{$0.id==id}) {
                 motifs[i].rotation = isUndo ? from : to
@@ -1187,30 +1206,37 @@ struct CanvasView: View {
 
     func compositeImage() -> UIImage {
         let size = canvasSize == .zero ? CGSize(width:800,height:1024) : canvasSize
-        return UIGraphicsImageRenderer(size:size).image { _ in
+        return UIGraphicsImageRenderer(size:size).image { ctx in
+            let cgCtx = ctx.cgContext
+            // 1. Cream paper background
             UIColor(red:0.96,green:0.94,blue:0.89,alpha:1).setFill()
             UIRectFill(CGRect(origin:.zero,size:size))
+
+            // 2. Motifs — drawn with rotation, multiply blend removes white halos
             for m in motifs {
                 let w=220*m.scale, h=220*m.scale
                 let rect=CGRect(x:-w/2, y:-h/2, width:w, height:h)
-                let ctx = UIGraphicsGetCurrentContext()!
-                ctx.saveGState()
-                ctx.translateBy(x: m.position.x, y: m.position.y)
-                ctx.rotate(by: CGFloat(m.rotation) * .pi / 180)
+                cgCtx.saveGState()
+                cgCtx.translateBy(x: m.position.x, y: m.position.y)
+                cgCtx.rotate(by: CGFloat(m.rotation) * .pi / 180)
                 if let data = m.filledImageData, let ui = UIImage(data: data) {
-                    ui.draw(in: rect)
+                    // filledImageData has white base — multiply blends it onto cream paper
+                    ui.draw(in: rect, blendMode: .multiply, alpha: 1)
                 } else {
                     if let t = m.tintColor {
-                        t.uiColor.setFill(); UIRectFill(rect)
+                        t.uiColor.setFill(); cgCtx.fill(rect)
                     }
                     if let ui = UIImage(named: m.imageName) {
                         ui.draw(in: rect, blendMode: .multiply, alpha: 1.0)
                     }
                 }
-                ctx.restoreGState()
+                cgCtx.restoreGState()
             }
-            canvasView.drawing.image(from:CGRect(origin:.zero,size:size),scale:UIScreen.main.scale)
-                .draw(in:CGRect(origin:.zero,size:size))
+
+            // 3. PencilKit strokes — multiply blend so the white PKDrawing background disappears
+            let strokeImg = canvasView.drawing.image(
+                from: CGRect(origin:.zero, size:size), scale:1.0)
+            strokeImg.draw(in: CGRect(origin:.zero,size:size), blendMode:.multiply, alpha:1)
         }
     }
 
@@ -1337,6 +1363,7 @@ struct MotifItemView: View {
     let onRotateEnd: (Double, Double) -> Void
 
     @State private var dragStart:    CGPoint? = nil
+    @State private var posAtDragStart: CGPoint = .zero   // motif position when drag began
     // FIX 9: store the committed rotation at gesture start; only add the delta each frame
     @State private var rotBase:      Double   = 0.0
     @State private var liveRotDelta: Double   = 0.0   // extra degrees being dragged right now
@@ -1380,12 +1407,22 @@ struct MotifItemView: View {
             DragGesture(minimumDistance:6, coordinateSpace:.global)
                 .onChanged { val in
                     guard isMotifMode, !motif.isLocked else { return }
-                    if dragStart == nil { dragStart = val.startLocation }
-                    motif.position = val.location
+                    if dragStart == nil {
+                        dragStart = val.startLocation
+                        posAtDragStart = motif.position
+                    }
+                    // Move by delta from gesture start — works for ANY motif regardless of position
+                    let dx = val.location.x - val.startLocation.x
+                    let dy = val.location.y - val.startLocation.y
+                    motif.position = CGPoint(x: posAtDragStart.x + dx,
+                                             y: posAtDragStart.y + dy)
                 }
                 .onEnded { val in
-                    guard isMotifMode, let start = dragStart else { dragStart = nil; return }
-                    onDragEnd(start, val.location)
+                    guard isMotifMode, dragStart != nil else { dragStart = nil; return }
+                    let dx = val.location.x - val.startLocation.x
+                    let dy = val.location.y - val.startLocation.y
+                    let finalPos = CGPoint(x: posAtDragStart.x + dx, y: posAtDragStart.y + dy)
+                    onDragEnd(posAtDragStart, finalPos)
                     dragStart = nil
                 }
         )
