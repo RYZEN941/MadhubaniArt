@@ -51,7 +51,6 @@ Each card opens a detail modal with a description, cultural context, and art gli
 Ten thematic symbol cards — Mythology, Marriage, Nature, Fish, Lotus, Peacock, Sun & Moon, Bamboo, Turtle, Snake — each with a description of cultural significance in Mithila tradition.
 
 ### Save & Export
-- **Autosave** every 25 seconds while you draw
 - Named save with conflict detection
 - Thumbnail previews on the home screen show exactly what's on the canvas (cream paper background, motifs with rotation, all fill colors)
 - **Export** as a full-resolution image via the system share sheet
@@ -113,7 +112,10 @@ MadhubaniArt.swiftpm
 
 ## Screenshots
 
-> *(Add screenshots here)*
+
+![WhatsApp Image 2026-02-27 at 6 17 46 PM](https://github.com/user-attachments/assets/d5487160-9d94-4c71-a093-4a95f2cff2a9)
+
+![WhatsApp Image 2026-02-27 at 6 22 50 PM](https://github.com/user-attachments/assets/4f330f49-35f5-438c-968f-53ba3efbe19b)
 
 ---
 
